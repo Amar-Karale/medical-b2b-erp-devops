@@ -3,6 +3,7 @@ name: Prepare Portfolio Repository
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,10 +24,7 @@ jobs:
           set -euo pipefail
           rm -rf /tmp/reference-project
           git clone --depth 1 https://github.com/AnupDudhe/edublitz-b2b-medical-erp.git /tmp/reference-project
-          rsync -a --delete \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            /tmp/reference-project/ ./
+          rsync -a --delete --exclude='.git/' --exclude='.github/' /tmp/reference-project/ ./
 
       - name: Remove unsafe/non-essential files
         shell: bash
@@ -41,68 +39,40 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
-          for path in [
-              Path('user-service/src/main/resources/application.yml'),
-              Path('product-service/src/main/resources/application.yml'),
-              Path('order-service/src/main/resources/application.yml'),
-          ]:
-              text = path.read_text()
-              text = text.replace(
-                  '${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}',
-                  '${JWT_SECRET}'
-              )
+          for path in [Path('user-service/src/main/resources/application.yml'), Path('product-service/src/main/resources/application.yml'), Path('order-service/src/main/resources/application.yml')]:
+              text = path.read_text().replace('${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}', '${JWT_SECRET}')
               path.write_text(text)
-
-          for path in [
-              Path('terraform/env/dev/main.tf'),
-              Path('terraform/env/prod/main.tf'),
-          ]:
+          for path in [Path('terraform/env/dev/main.tf'), Path('terraform/env/prod/main.tf')]:
               text = path.read_text()
               text = text.replace('kubernetes_version    = "1.30"', 'kubernetes_version    = "1.34"')
               text = text.replace('kubernetes_version  = "1.30"', 'kubernetes_version  = "1.34"')
               text = text.replace('region         = "us-east-1"', 'region         = "us-west-1"')
               text = text.replace('dynamodb_table = "med-erp-terraform-locks"', 'use_lockfile   = true')
               path.write_text(text)
-
-          for path in [
-              Path('terraform/env/dev/variables.tf'),
-              Path('terraform/env/prod/variables.tf'),
-          ]:
-              if path.exists():
-                  text = path.read_text().replace('default = "us-east-1"', 'default = "us-west-1"')
-                  path.write_text(text)
-
-          for path in [
-              Path('jenkins/Jenkinsfile.backend'),
-              Path('jenkins/Jenkinsfile.frontend'),
-              Path('jenkins/Jenkinsfile.infra'),
-          ]:
-              text = path.read_text().replace("AWS_REGION     = 'us-east-1'", "AWS_REGION     = 'us-west-1'")
-              text = text.replace("AWS_REGION = 'us-east-1'", "AWS_REGION = 'us-west-1'")
+          for path in [Path('terraform/env/dev/variables.tf'), Path('terraform/env/prod/variables.tf')]:
+              if path.exists(): path.write_text(path.read_text().replace('default = "us-east-1"', 'default = "us-west-1"'))
+          for path in [Path('jenkins/Jenkinsfile.backend'), Path('jenkins/Jenkinsfile.frontend'), Path('jenkins/Jenkinsfile.infra')]:
+              text = path.read_text().replace("AWS_REGION     = 'us-east-1'", "AWS_REGION     = 'us-west-1'").replace("AWS_REGION = 'us-east-1'", "AWS_REGION = 'us-west-1'")
               path.write_text(text)
           PY
 
-      - name: Fix frontend reproducible install
+      - name: Fix frontend install and create lockfile
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           p = Path('frontend/Dockerfile')
-          text = p.read_text().replace('RUN npm ci --prefer-offline', 'RUN npm install --no-audit --no-fund')
-          p.write_text(text)
+          p.write_text(p.read_text().replace('RUN npm ci --prefer-offline', 'RUN npm install --no-audit --no-fund'))
           PY
-          if [ -f frontend/package.json ]; then
-            cd frontend
-            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          fi
+          cd frontend
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Add safe Kubernetes secret template
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p k8s/secrets scripts
+          mkdir -p k8s/secrets
           cat > k8s/secrets/app-secrets.example.yaml <<'YAML'
           apiVersion: v1
           kind: Secret
@@ -121,8 +91,6 @@ jobs:
 
           `app-secrets.yaml` is intentionally not stored in Git.
 
-          For a real deployment, create the secret from your protected environment:
-
           ```bash
           kubectl -n med-erp create secret generic app-secrets \\
             --from-literal=MONGODB_URI_USER="$MONGODB_URI_USER" \\
@@ -131,16 +99,13 @@ jobs:
             --from-literal=JWT_SECRET="$JWT_SECRET" \\
             --dry-run=client -o yaml | kubectl apply -f -
           ```
-
-          Do not paste credentials into Git, Jenkinsfiles, Dockerfiles, or Kubernetes manifests.
           MD
 
-      - name: Add repository hygiene files
+      - name: Add repository hygiene and attribution
         shell: bash
         run: |
           set -euo pipefail
-          cat > .gitignore <<'EOF_GITIGNORE'
-          # Secrets / environment files
+          cat > .gitignore <<'EOF'
           .env
           .env.*
           !.env.example
@@ -148,8 +113,6 @@ jobs:
           *.key
           *.crt
           k8s/secrets/app-secrets.yaml
-
-          # Terraform
           .terraform/
           *.tfstate
           *.tfstate.*
@@ -157,39 +120,27 @@ jobs:
           *.tfplan
           crash.log
           crash.*.log
-
-          # Java / Maven
           **/target/
-
-          # Node / frontend
           **/node_modules/
           frontend/dist/
           npm-debug.log*
           yarn-debug.log*
           yarn-error.log*
           pnpm-debug.log*
-
-          # IDE / OS
           .idea/
           .vscode/
           *.iml
           .DS_Store
           Thumbs.db
-
-          # Jenkins / local tooling
           workspace/
           .scannerwork/
-          EOF_GITIGNORE
-
-          cat > SECURITY.md <<'EOF_SECURITY'
+          EOF
+          cat > SECURITY.md <<'EOF'
           # Security policy
 
-          This repository is a DevOps portfolio project. Never commit AWS credentials, MongoDB passwords, JWT secrets, kubeconfigs, private keys, or Terraform state.
-
-          Runtime secrets should be supplied through protected Jenkins credentials, AWS IAM roles, Kubernetes Secrets/External Secrets, or another dedicated secret manager.
-          EOF_SECURITY
-
-          cat > ATTRIBUTION.md <<'EOF_ATTRIBUTION'
+          Never commit AWS credentials, MongoDB passwords, JWT secrets, kubeconfigs, private keys, or Terraform state. Use protected Jenkins credentials, AWS IAM roles, Kubernetes Secrets/External Secrets, or another dedicated secret manager.
+          EOF
+          cat > ATTRIBUTION.md <<'EOF'
           # Attribution
 
           This portfolio repository is an adapted DevOps implementation based on the publicly accessible reference project:
@@ -199,13 +150,13 @@ jobs:
           The original application structure and domain concepts are retained where useful. This repository adds portfolio-focused infrastructure hygiene, AWS `us-west-1` alignment, secret-safe configuration, CI/CD hardening, documentation, and deployment conventions.
 
           This attribution does not imply that the original project was authored by the repository owner.
-          EOF_ATTRIBUTION
+          EOF
 
       - name: Replace portfolio README
         shell: bash
         run: |
           set -euo pipefail
-          cat > README.md <<'EOF_README'
+          cat > README.md <<'EOF'
           # Medical B2B ERP — DevOps Portfolio Project
 
           A cloud-native Medical B2B ERP platform implemented as a microservices application and prepared as a hands-on DevOps portfolio project.
@@ -249,7 +200,7 @@ jobs:
           ## Technology stack
 
           - **AWS:** EKS, VPC, ALB, ECR, S3, CloudFront, Route53, IAM
-          - **Infrastructure as Code:** Terraform modules
+          - **IaC:** Terraform modules
           - **CI/CD:** Jenkins
           - **Security:** Trivy image scanning, Kubernetes Secrets, IAM roles
           - **Containers:** Docker
@@ -299,7 +250,7 @@ jobs:
           - Terraform 1.15+
           - Docker
           - kubectl
-          - Helm (for EKS add-ons where required)
+          - Helm
           - Java 17+
           - Node.js 20+
           - Jenkins
@@ -307,35 +258,24 @@ jobs:
 
           ## Terraform deployment
 
-          The Terraform environments are under `terraform/env/dev` and `terraform/env/prod`.
+          Terraform environments are under `terraform/env/dev` and `terraform/env/prod`.
 
-          Before `terraform init`, create the remote state bucket and provide its name through the backend configuration. Do not commit Terraform state or credentials.
-
-          Example:
+          Before `terraform init`, create the remote state bucket and provide its name through backend configuration. Do not commit Terraform state or credentials.
 
           ```bash
           cd terraform/env/dev
-          terraform init \\
-            -backend-config="bucket=<YOUR-TERRAFORM-STATE-BUCKET>"
+          terraform init -backend-config="bucket=<YOUR-TERRAFORM-STATE-BUCKET>"
           terraform validate
           terraform plan -var-file=terraform.tfvars
           ```
 
-          Create your local `terraform.tfvars` from the provided example and supply only your own infrastructure values. It is ignored by Git.
+          Create `terraform.tfvars` from the provided example and supply only your own infrastructure values. It is ignored by Git.
 
           ## MongoDB Atlas
 
-          The application expects three logical databases:
-
-          - `users_db`
-          - `products_db`
-          - `orders_db`
-
-          Store the Atlas connection strings in protected environment variables or Kubernetes Secrets. Never commit the real Atlas username/password.
+          The application expects `users_db`, `products_db`, and `orders_db`. Store Atlas connection strings in protected environment variables or Kubernetes Secrets.
 
           ## Jenkins
-
-          Jenkinsfiles are provided under `jenkins/`:
 
           - `Jenkinsfile.infra` — Terraform plan/apply flow
           - `Jenkinsfile.backend` — backend build, image build, Trivy scan and EKS deployment
@@ -343,22 +283,21 @@ jobs:
 
           Configure credentials in Jenkins rather than hard-coding them in pipeline files.
 
-          ## Resume-ready skills demonstrated
+          ## Resume-ready skills
 
           **AWS | Terraform | EKS | Kubernetes | Docker | Jenkins | CI/CD | Trivy | ECR | S3 | CloudFront | Route53 | IAM | Linux | Java | Spring Boot | React | MongoDB Atlas | Infrastructure as Code**
 
-          ## License / attribution
+          ## Attribution
 
-          See [ATTRIBUTION.md](ATTRIBUTION.md) for the source-project attribution and adaptation statement.
-          EOF_README
+          See [ATTRIBUTION.md](ATTRIBUTION.md).
+          EOF
 
-      - name: Format and validate repository configuration
+      - name: Format and secret scan
         shell: bash
         run: |
           set -euo pipefail
           terraform fmt -recursive terraform
-          if grep -RInE 'mongodb\+srv://[^<[:space:]]+:[^<[:space:]]+@|AKIA[0-9A-Z]{16}|aws_secret_access_key[[:space:]]*=' \
-              --exclude-dir=.git --exclude='*.lock.hcl' .; then
+          if grep -RInE 'mongodb\+srv://[^<[:space:]]+:[^<[:space:]]+@|AKIA[0-9A-Z]{16}|aws_secret_access_key[[:space:]]*=' --exclude-dir=.git --exclude='*.lock.hcl' .; then
             echo 'Potential credential material found in repository.'
             exit 1
           fi
