@@ -14,9 +14,14 @@ jobs:
     if: github.repository == 'Amar-Karale/medical-b2b-erp-devops'
     steps:
       - name: Checkout portfolio repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.9
 
       - name: Import reference project
         shell: bash
