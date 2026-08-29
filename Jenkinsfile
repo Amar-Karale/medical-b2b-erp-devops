@@ -8,13 +8,30 @@ pipeline {
         ECR_PREFIX = "${ECR_REGISTRY}/med-erp"
         EKS_CLUSTER = 'med-erp-dev-eks'
         K8S_NAMESPACE = 'med-erp'
+
+        JAVA_HOME = '/usr/lib/jvm/java-21-openjdk-amd64'
+        PATH = "/usr/lib/jvm/java-21-openjdk-amd64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     }
 
     stages {
 
         stage('Checkout') {
             steps {
+                deleteDir()
                 checkout scm
+
+                sh '''
+                    echo "===== WORKSPACE ====="
+                    pwd
+                    git rev-parse --short HEAD
+
+                    echo "===== JAVA ====="
+                    java -version
+
+                    echo "===== MAVEN ====="
+                    which mvn
+                    mvn -version
+                '''
             }
         }
 
@@ -23,18 +40,19 @@ pipeline {
                 sh '''
                     set -e
 
-                    for SERVICE in user-service product-service order-service; do
-                        echo "===== Building $SERVICE ====="
-                        cd $WORKSPACE/$SERVICE
+                    echo "===== USER SERVICE ====="
+                    mvn -f user-service/pom.xml clean package -DskipTests
 
-                        chmod +x mvnw 2>/dev/null || true
+                    echo "===== PRODUCT SERVICE ====="
+                    mvn -f product-service/pom.xml clean package -DskipTests
 
-                        if [ -f mvnw ]; then
-                            ./mvnw clean package -DskipTests
-                        else
-                            mvn clean package -DskipTests
-                        fi
-                    done
+                    echo "===== ORDER SERVICE ====="
+                    mvn -f order-service/pom.xml clean package -DskipTests
+
+                    echo "===== JARS ====="
+                    ls -lh user-service/target/*.jar
+                    ls -lh product-service/target/*.jar
+                    ls -lh order-service/target/*.jar
                 '''
             }
         }
@@ -46,22 +64,25 @@ pipeline {
 
                     TAG="v1.0.${BUILD_NUMBER}"
 
+                    echo "===== BUILD USER SERVICE ====="
                     docker build \
                       -t ${ECR_PREFIX}/user-service:${TAG} \
                       -t ${ECR_PREFIX}/user-service:latest \
                       ./user-service
 
+                    echo "===== BUILD PRODUCT SERVICE ====="
                     docker build \
                       -t ${ECR_PREFIX}/product-service:${TAG} \
                       -t ${ECR_PREFIX}/product-service:latest \
                       ./product-service
 
+                    echo "===== BUILD ORDER SERVICE ====="
                     docker build \
                       -t ${ECR_PREFIX}/order-service:${TAG} \
                       -t ${ECR_PREFIX}/order-service:latest \
                       ./order-service
 
-                    echo "Images built successfully"
+                    echo "===== IMAGES ====="
                     docker images | grep med-erp
                 '''
             }
@@ -70,6 +91,8 @@ pipeline {
         stage('ECR Login') {
             steps {
                 sh '''
+                    set -e
+
                     aws ecr get-login-password \
                       --region ${AWS_REGION} | \
                     docker login \
@@ -94,6 +117,9 @@ pipeline {
 
                     docker push ${ECR_PREFIX}/order-service:${TAG}
                     docker push ${ECR_PREFIX}/order-service:latest
+
+                    echo "===== ECR PUSH COMPLETE ====="
+                    echo "TAG=${TAG}"
                 '''
             }
         }
@@ -129,20 +155,29 @@ pipeline {
                 sh '''
                     set -e
 
-                    kubectl rollout status deployment/user-service \
-                      -n ${K8S_NAMESPACE} --timeout=180s
+                    kubectl rollout status \
+                      deployment/user-service \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=180s
 
-                    kubectl rollout status deployment/product-service \
-                      -n ${K8S_NAMESPACE} --timeout=180s
+                    kubectl rollout status \
+                      deployment/product-service \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=180s
 
-                    kubectl rollout status deployment/order-service \
-                      -n ${K8S_NAMESPACE} --timeout=180s
+                    kubectl rollout status \
+                      deployment/order-service \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=180s
 
                     echo "===== PODS ====="
                     kubectl get pods -n ${K8S_NAMESPACE} -o wide
 
                     echo "===== DEPLOYMENTS ====="
-                    kubectl get deployment -n ${K8S_NAMESPACE}
+                    kubectl get deployments -n ${K8S_NAMESPACE}
+
+                    echo "===== SERVICES ====="
+                    kubectl get services -n ${K8S_NAMESPACE}
 
                     echo "===== INGRESS ====="
                     kubectl get ingress -n ${K8S_NAMESPACE}
@@ -158,6 +193,11 @@ pipeline {
 
         failure {
             echo 'MED-ERP CI/CD PIPELINE FAILED'
+        }
+
+        always {
+            echo "BUILD NUMBER: ${BUILD_NUMBER}"
+            echo "BUILD RESULT: ${currentBuild.currentResult}"
         }
     }
 }
