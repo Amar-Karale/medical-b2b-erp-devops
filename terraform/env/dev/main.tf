@@ -64,8 +64,8 @@ module "eks" {
   vpc_id              = module.vpc.vpc_id
   vpc_cidr            = module.vpc.vpc_cidr
   private_subnet_ids  = module.vpc.private_subnet_ids
-  node_instance_types = ["t3.medium"]
-  capacity_type       = "SPOT" # Use Spot for dev cost savings
+  node_instance_types = ["t3.micro"]
+  capacity_type       = "ON_DEMAND" # Use Spot for dev cost savings
   node_desired_count  = 2
   node_min_count      = 1
   node_max_count      = 4
@@ -84,9 +84,9 @@ module "ecr" {
 # ── S3 + CloudFront ────────────────────────────────────────────────────────────
 module "frontend" {
   source              = "../../modules/s3-cloudfront"
-  project             = local.project
+  project             = "med-erp-904053119758"
   environment         = local.environment
-  domain_names        = ["dev.med-erp.${var.domain_name}"]
+  domain_names        = ["med-erp.${var.domain_name}"]
   acm_certificate_arn = var.acm_certificate_arn
   tags                = local.common_tags
 }
@@ -95,7 +95,7 @@ module "frontend" {
 module "dns" {
   source                 = "../../modules/route53"
   domain_name            = var.domain_name
-  frontend_subdomain     = "dev.med-erp"
+  frontend_subdomain     = "med-erp"
   api_subdomain          = "dev.api.med-erp"
   cloudfront_domain_name = module.frontend.cloudfront_domain_name
   alb_dns_name           = var.alb_dns_name # Set after ALB Ingress Controller deploys

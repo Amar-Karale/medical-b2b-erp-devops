@@ -4,7 +4,7 @@
 ################################################################################
 
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, 3)
+  azs = data.aws_availability_zones.available.names
 }
 
 data "aws_availability_zones" "available" {

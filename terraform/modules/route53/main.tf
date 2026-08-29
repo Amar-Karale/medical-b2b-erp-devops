@@ -22,6 +22,7 @@ resource "aws_route53_record" "frontend" {
 
 # API (ALB Ingress)
 resource "aws_route53_record" "api" {
+  count   = var.alb_dns_name != "" ? 1 : 0
   zone_id = data.aws_route53_zone.main.zone_id
   name    = var.api_subdomain
   type    = "CNAME"
